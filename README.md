@@ -34,4 +34,7 @@ This is the file with the configuration used to run the application.
     "simulate": [bool]
 }
 ```
+If you run with simulate=true 
 
+
+# 
