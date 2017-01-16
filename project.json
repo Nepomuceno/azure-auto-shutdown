@@ -6,7 +6,8 @@
     "preserveCompilationContext": true
   },
   "dependencies": {
-    "Microsoft.Azure.Management.Fluent": "1.0.0-beta4"
+    "Microsoft.Azure.Management.Fluent": "1.0.0-beta4",
+    "Newtonsoft.Json": "9.0.1"
   },
   "frameworks": {
     "netcoreapp1.1": {
