@@ -42,10 +42,10 @@ If you run with simulate=true It will simulate it but will not actually run shut
 Description | Tag value
 ----------- | -----------
 Shut down from 10PM to 6 AM UTC every day | 10pm -> 6am
-Shut down from 10PM to 6 AM UTC every day (different format, same result as above) | 22:00 -> 06:00
-Shut down from 8PM to 12AM and from 2AM to 7AM UTC every day (bringing online from 12-2AM for maintenance in between) | 8PM -> 12AM, 2AM -> 7AM
-Shut down all day Saturday and Sunday (midnight to midnight) | Saturday, Sunday
-Shut down from 2AM to 7AM UTC every day and all day on weekends | 2:00 -> 7:00, Saturday, Sunday
+Shut down from 10PM to 6 AM UTC every day <br>(different format, same result as above) | 22:00 -> 06:00
+Shut down from 8PM to 12AM and from 2AM to 7AM UTC every day <br>(bringing online from 12-2AM for maintenance in between) | 8PM -> 12AM, 2AM -> 7AM
+Shut down all day Saturday and Sunday <br>(midnight to midnight) | Saturday, Sunday
+Shut down from 2AM to 7AM UTC every day <br>and all day on weekends | 2:00 -> 7:00, Saturday, Sunday
 Shut down on Christmas Day and New Year’s Day | December 25, January 1
-Shut down from 2AM to 7AM UTC every day, and all day on weekends, and on Christmas Day | 2:00 -> 7:00, Saturday, Sunday, December 25
+Shut down from 2AM to 7AM UTC every day,<br>and all day on weekends, and on Christmas Day | 2:00 -> 7:00, Saturday, Sunday, December 25
 Shut down always – I don’t want this VM online, ever | 00:00 -> 23:59:59
