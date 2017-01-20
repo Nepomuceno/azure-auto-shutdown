@@ -7,18 +7,37 @@ using System.Text.RegularExpressions;
 using System.Diagnostics;
 using System.Linq;
 using System.IO;
+using System.Collections.Generic;
+using Newtonsoft.Json;
+using System.Collections.Concurrent;
 
 namespace AutoShutdown
 {
     public class ShutdownConfig {
         public bool Simulate { get; set; }
-        public string[] Subscriptions { get; set; }
+        public bool DefaultToOff { get; set; }
+        public SubscriptionInfo[] Subscriptions { get; set; }
+        public bool SendSlackInfo {get;set;}
+        public string SlackUrl {get;set;}
+
+    }
+    public class SubscriptionInfo {
+        public bool? Simulate { get; set; }
+        public string SubscriptionId { get; set; }
+        public string Name { get; set; }
+        public bool? DefaultToOff { get; set; }
     }
     public class Program
     {
-        public static async void AssertVms(string subscriptionId,bool simulate) {
-            
-            AzureCredentials credentials = AzureCredentials.FromFile("./cred.azure");
+        public static ConcurrentDictionary<string,SubscriptionInfo> subscriptionInfo = 
+            new ConcurrentDictionary<string,SubscriptionInfo>(); 
+        private static ShutdownConfig config;
+        public static ConcurrentBag<string> MachinesStarted = new ConcurrentBag<string>();
+        public static ConcurrentBag<string> MachinesStopped = new ConcurrentBag<string>();
+        public static ConcurrentBag<string> MachinesWithTag = new ConcurrentBag<string>();
+        public static ConcurrentBag<string> MachinesWithoutTag = new ConcurrentBag<string>();
+
+        public static async void AssertVms(AzureCredentials credentials, string subscriptionId) {
             
             var azure = Azure
                     .Configure()
@@ -26,51 +45,126 @@ namespace AutoShutdown
                     .Authenticate(credentials)
                     .WithSubscription(subscriptionId);
 
-            var azureVms = azure.VirtualMachines.List();
-            azureVms.LoadAll();
+            var defaultToOff = subscriptionInfo[subscriptionId].DefaultToOff.HasValue ? subscriptionInfo[subscriptionId].DefaultToOff.Value : config.DefaultToOff;
+            var simulate = subscriptionInfo[subscriptionId].DefaultToOff.HasValue ? subscriptionInfo[subscriptionId].Simulate.Value : config.Simulate;
+
+            PagedList<Microsoft.Azure.Management.Compute.Fluent.IVirtualMachine> azureVms;
+            
+            try {
+                 azureVms = azure.VirtualMachines.List();
+                 azureVms.LoadAll();
+            } catch (Exception ex){
+                azureVms = new PagedList<Microsoft.Azure.Management.Compute.Fluent.IVirtualMachine>(new List<Microsoft.Azure.Management.Compute.Fluent.IVirtualMachine>());
+                Console.WriteLine(ex.Message);
+            }
+           
 
             var parallelOptions = new ParallelOptions();
             parallelOptions.MaxDegreeOfParallelism = 50;
 
             Parallel.ForEach(azureVms, parallelOptions, (vm) =>{
-                if(vm.Tags.ContainsKey("AutoShutdownSchedule"))
+            if(vm.Tags.ContainsKey("AutoShutdownSchedule"))
                 {
-                    Debug.WriteLine($"[Trace - {vm.Name}] Auto-Shutdown found");
-                    if(vm.Inner.ProvisioningState != "Failed")
-                    {
-                        var powerState = vm.PowerState.ToString().Replace("PowerState/","");
-                        var schedules = vm.Tags["AutoShutdownSchedule"].Split(',');
-                        var shouldBeOff = schedules.Any(x => CheckScheduleEntry(x));
-                        if(shouldBeOff && powerState.Contains("running"))
+                    try {
+                        MachinesWithTag.Add(vm.Name);
+                        Debug.WriteLine($"[Trace - {vm.Name}] Auto-Shutdown found");
+                        if(vm.Inner.ProvisioningState != "Failed")
                         {
-                            Debug.WriteLine($"[Trace - {vm.Name}] Shutting down VM");
-                            if (!simulate) {
-                                Task.Run(() => {azure.VirtualMachines.Deallocate(vm.ResourceGroupName,vm.Name);});
+                            if(!(vm.Tags["AutoShutdownSchedule"].ToLower() == "donotshutdown"))
+                            {
+                                var powerState = vm.PowerState.ToString().Replace("PowerState/","");
+                                var schedules = vm.Tags["AutoShutdownSchedule"].Split(',');
+                                var shouldBeOff = schedules.Any(x => CheckScheduleEntry(x));
+                                if(shouldBeOff && powerState.Contains("running"))
+                                {
+                                    Debug.WriteLine($"[Trace - {vm.Name}] Shutting down VM");
+                                    MachinesStopped.Add(vm.Name);
+                                    if (!simulate) {
+                                        Task.Run(() => {azure.VirtualMachines.Deallocate(vm.ResourceGroupName,vm.Name);});
+                                    }
+                                } else if(!shouldBeOff && powerState.Contains("deallocated")) {
+                                    MachinesStarted.Add(vm.Name);
+                                    Debug.WriteLine($"[Trace - {vm.Name}] Starting VM");
+                                    if(!simulate)  {
+                                        Task.Run(() => {azure.VirtualMachines.Start(vm.ResourceGroupName,vm.Name);});
+                                    }
+                                }
                             }
-                        } else if(!shouldBeOff && powerState.Contains("deallocated")) {
-                            Debug.WriteLine($"[Trace - {vm.Name}] Starting VM");
-                            if(!simulate)  {
-                                Task.Run(() => {azure.VirtualMachines.Start(vm.ResourceGroupName,vm.Name);});
-                            }
+                        } else {
+                            Debug.WriteLine($"[Error - {vm.Name}] Provisioned with error");
                         }
-                    } else {
-                        Debug.WriteLine($"[Error - {vm.Name}] Provisioned with error");
+                    } catch {
+                        Console.WriteLine($"Error getting date for vm {vm.Name}");
                     }
-                    
-                    
                 } else {
+                    if(defaultToOff)
+                    {
+                        MachinesStopped.Add(vm.Name);
+                        if (!simulate) {
+                            Task.Run(() => {azure.VirtualMachines.Deallocate(vm.ResourceGroupName,vm.Name);});
+                        }
+                    }
+                    MachinesWithoutTag.Add(vm.Name);
                     Debug.WriteLine($"[Trace - {vm.Name}] Auto-Shutdown not found");
                 }                
             });
         }
         public static void Main(string[] args)
         {
+            AzureCredentials credentials = AzureCredentials.FromFile("./cred.azure");
             Console.WriteLine("Starting to verify machine state");
-            var config = Newtonsoft.Json.JsonConvert.DeserializeObject<ShutdownConfig>(File.ReadAllText("./base.config.azure"));
+            var azureList = Azure.Authenticate(credentials).Subscriptions.List();
+            azureList.LoadAll();
+            try{
+                config = JsonConvert.DeserializeObject<ShutdownConfig>(File.ReadAllText("./base.config.azure"));
+            } catch (Exception ex){
+                Console.WriteLine(ex.Message);
+            }
+            SlackPayload payload = new SlackPayload();
             foreach(var subscription in config.Subscriptions){
-                AssertVms(subscription,config.Simulate);
+                subscriptionInfo.GetOrAdd(subscription.SubscriptionId,subscription);
+            }
+
+            foreach(var subscription in config.Subscriptions){
+                AssertVms(credentials, subscription.SubscriptionId);
+                if(MachinesStarted.Count > 0 || MachinesStopped.Count > 0)
+                {
+                    payload.Attachments.Add(ConfigureSlackMessage(azureList.Single(s => s.SubscriptionId == subscription.SubscriptionId).DisplayName, config.Simulate));
+                }
+                MachinesStarted = new ConcurrentBag<string>();
+                MachinesStopped = new ConcurrentBag<string>();
+                MachinesWithTag = new ConcurrentBag<string>();
+                MachinesWithoutTag = new ConcurrentBag<string>();
+            }
+            if(config.SendSlackInfo)
+            {
+                SlackClient client = new SlackClient(new Uri(config.SlackUrl));;            
+                var response = client.SendMessageAsync(payload).Result;
+                Console.WriteLine(JsonConvert.SerializeObject(response));
             }
         }
+        
+
+        private static SlackMessage ConfigureSlackMessage(string subscription, bool simulate)
+        {
+            var message = new SlackMessage();
+            message.Color = simulate ? "good" : "danger";
+            message.Username = "Auto Shutdown *" + subscription + "*";
+            message.PreText = $"Shutdown for *{subscription}* \n  Machines with tag: {MachinesWithTag.Count}, Machines without tag: {MachinesWithoutTag.Count}";
+            message.Fields = new List<SlackField>();
+            message.Fields.Add(new SlackField(){
+                Title = $"{MachinesStarted.Count} Machines were started:",
+                Value = string.Join("\n",MachinesStarted),
+                Short = true
+            });
+            message.Fields.Add(new SlackField(){
+                Title = $"{MachinesStopped.Count} Machines were stopped:",
+                Value = string.Join("\n",MachinesStopped),
+                Short = true
+            });
+            return message;
+        }
+
         static bool CheckScheduleEntry (string timeRange)
 		{	
 			var currentTime = DateTime.UtcNow;
