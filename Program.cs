@@ -189,12 +189,12 @@ namespace AutoShutdown
             message.Fields = new List<SlackField>();
             message.Fields.Add(new SlackField(){
                 Title = $"{MachinesStarted.Count} Machines were started:",
-                Value = string.Join("\n",MachinesStarted),
+                Value = string.Join("\n",MachinesStarted.OrderBy(m => m)),
                 Short = true
             });
             message.Fields.Add(new SlackField(){
                 Title = $"{MachinesStopped.Count} Machines were stopped:",
-                Value = string.Join("\n",MachinesStopped),
+                Value = string.Join("\n",MachinesStopped.OrderBy(m => m)),
                 Short = true
             });
             return message;
