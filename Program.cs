@@ -49,7 +49,7 @@ namespace AutoShutdown
             var simulate = subscriptionInfo[subscriptionId].DefaultToOff.HasValue ? subscriptionInfo[subscriptionId].Simulate.Value : config.Simulate;
 
             PagedList<Microsoft.Azure.Management.Compute.Fluent.IVirtualMachine> azureVms;
-            
+
             try {
                  azureVms = azure.VirtualMachines.List();
                  azureVms.LoadAll();
@@ -63,30 +63,43 @@ namespace AutoShutdown
             parallelOptions.MaxDegreeOfParallelism = 50;
 
             Parallel.ForEach(azureVms, parallelOptions, (vm) =>{
-            if(vm.Tags.ContainsKey("AutoShutdownSchedule"))
+            var shutdownKey = vm.Tags.FirstOrDefault(t => t.Key.Equals("AutoShutdownSchedule",StringComparison.OrdinalIgnoreCase));
+            if(!string.IsNullOrWhiteSpace(shutdownKey.Key))
                 {
                     try {
                         MachinesWithTag.Add(vm.Name);
                         Debug.WriteLine($"[Trace - {vm.Name}] Auto-Shutdown found");
                         if(vm.Inner.ProvisioningState != "Failed")
                         {
-                            if(!(vm.Tags["AutoShutdownSchedule"].ToLower() == "donotshutdown"))
+                            if(!(shutdownKey.Value.ToLower() == "donotshutdown"))
                             {
                                 var powerState = vm.PowerState.ToString().Replace("PowerState/","");
-                                var schedules = vm.Tags["AutoShutdownSchedule"].Split(',');
+                                var schedules = shutdownKey.Value.Split(',');
                                 var shouldBeOff = schedules.Any(x => CheckScheduleEntry(x));
                                 if(shouldBeOff && powerState.Contains("running"))
                                 {
                                     Debug.WriteLine($"[Trace - {vm.Name}] Shutting down VM");
                                     MachinesStopped.Add(vm.Name);
                                     if (!simulate) {
-                                        Task.Run(() => {azure.VirtualMachines.Deallocate(vm.ResourceGroupName,vm.Name);});
+                                        Task.Run(() => {
+                                                try{
+                                                        azure.VirtualMachines.Deallocate(vm.ResourceGroupName,vm.Name);
+                                                    } catch (Exception ex){
+                                                        Console.WriteLine(ex.Message);
+                                                    }
+                                                });
                                     }
                                 } else if(!shouldBeOff && powerState.Contains("deallocated")) {
                                     MachinesStarted.Add(vm.Name);
                                     Debug.WriteLine($"[Trace - {vm.Name}] Starting VM");
                                     if(!simulate)  {
-                                        Task.Run(() => {azure.VirtualMachines.Start(vm.ResourceGroupName,vm.Name);});
+                                        Task.Run(() => {
+                                                try{
+                                                    azure.VirtualMachines.Start(vm.ResourceGroupName,vm.Name);
+                                                } catch (Exception ex){
+                                                    Console.WriteLine(ex.Message);
+                                                }
+                                            });
                                     }
                                 }
                             }
@@ -99,10 +112,25 @@ namespace AutoShutdown
                 } else {
                     if(defaultToOff)
                     {
-                        MachinesStopped.Add(vm.Name);
-                        if (!simulate) {
-                            Task.Run(() => {azure.VirtualMachines.Deallocate(vm.ResourceGroupName,vm.Name);});
+                        try {
+                            var powerState = vm.PowerState.ToString().Replace("PowerState/","");
+                            if(powerState.Contains("running"))
+                            {
+                                MachinesStopped.Add(vm.Name);
+                                if (!simulate) {
+                                    Task.Run(() => {
+                                        try{
+                                                azure.VirtualMachines.Deallocate(vm.ResourceGroupName,vm.Name);
+                                            } catch (Exception ex){
+                                                Console.WriteLine(ex.Message);
+                                            }
+                                        });
+                                }
+                            }
+                        } catch (Exception ex) {
+                            Console.WriteLine(ex.Message);
                         }
+                        
                     }
                     MachinesWithoutTag.Add(vm.Name);
                     Debug.WriteLine($"[Trace - {vm.Name}] Auto-Shutdown not found");
@@ -111,12 +139,19 @@ namespace AutoShutdown
         }
         public static void Main(string[] args)
         {
-            AzureCredentials credentials = AzureCredentials.FromFile("./cred.azure");
+            var credentialsPath = "./cred.azure";
+            var configPath = "./base.config.azure";
+            if(args.Count() == 2)
+            {
+                credentialsPath = args[0];
+                configPath = args[1];
+            }
+            AzureCredentials credentials = AzureCredentials.FromFile(credentialsPath);
             Console.WriteLine("Starting to verify machine state");
             var azureList = Azure.Authenticate(credentials).Subscriptions.List();
             azureList.LoadAll();
             try{
-                config = JsonConvert.DeserializeObject<ShutdownConfig>(File.ReadAllText("./base.config.azure"));
+                config = JsonConvert.DeserializeObject<ShutdownConfig>(File.ReadAllText(configPath));
             } catch (Exception ex){
                 Console.WriteLine(ex.Message);
             }

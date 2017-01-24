@@ -276,7 +276,7 @@ __pycache__/
 
 # Azureconfig
 *.azure
-*.config.azure
+*.config.azure*
 
 #VSCode
 .vscode/

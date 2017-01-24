@@ -19,5 +19,13 @@
       },
       "imports": "dnxcore50"
     }
+  },
+  "publishOptions":{
+    "include": [
+      "run.cmd",
+      "cred.azure",
+      "base.config.azure",
+      "settings.job"
+    ]
   }
 }
