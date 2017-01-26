@@ -7,7 +7,8 @@ using Newtonsoft.Json;
 
 namespace AutoShutdown
 {
-    public class SlackField {
+    public class SlackField
+    {
         [JsonProperty("title")]
         public string Title { get; set; }
         [JsonProperty("value")]
@@ -15,7 +16,8 @@ namespace AutoShutdown
         [JsonProperty("short")]
         public bool Short { get; set; }
     }
-    public class SlackMessage {
+    public class SlackMessage
+    {
         [JsonProperty("fallback")]
         public string Fallback { get; set; }
         [JsonProperty("text")]
@@ -36,8 +38,9 @@ namespace AutoShutdown
                 return new List<string>(){"text","pretext"};
             }
         }
-    }	
-    public class SlackPayload {
+    }
+    public class SlackPayload
+    {
         public SlackPayload()
         {
             Attachments = new List<SlackMessage>();
@@ -49,12 +52,12 @@ namespace AutoShutdown
     {
         private readonly Uri _webhookUrl;
         private readonly HttpClient _httpClient = new HttpClient();
-    
+
         public SlackClient(Uri webhookUrl)
         {
             _webhookUrl = webhookUrl;
         }
-    
+
         public async Task<HttpResponseMessage> SendMessageAsync(string message,
             string channel = null, string username = null)
         {
@@ -64,17 +67,21 @@ namespace AutoShutdown
                 Channel = channel,
                 Username = username
             };
+
             var serializedPayload = JsonConvert.SerializeObject(payload);
+            Console.WriteLine(serializedPayload);
             var response = await _httpClient.PostAsync(_webhookUrl,
                 new StringContent(serializedPayload, Encoding.UTF8, "application/json"));
-    
+
             return response;
         }
         public async Task<HttpResponseMessage> SendMessageAsync(SlackPayload payload)
         {
             var serializedPayload = JsonConvert.SerializeObject(payload);
+            Console.WriteLine(serializedPayload);
             var response = await _httpClient.PostAsync(_webhookUrl,
                 new StringContent(serializedPayload, Encoding.UTF8, "application/json"));
+
             return response;
         }
     }
