@@ -41,7 +41,7 @@ namespace AutoShutdown
         public static ConcurrentBag<string> MachinesWithTag = new ConcurrentBag<string>();
         public static ConcurrentBag<string> MachinesWithoutTag = new ConcurrentBag<string>();
 
-        public static async void AssertVms(AzureCredentials credentials, string subscriptionId)
+        public static void AssertVms(AzureCredentials credentials, string subscriptionId)
         {
             var azure = Azure
                     .Configure()
