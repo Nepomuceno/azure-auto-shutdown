@@ -1,7 +1,6 @@
 ﻿using System;
 using Microsoft.Azure.Management.Fluent;
-using Microsoft.Azure.Management.Resource.Fluent.Authentication;
-using Microsoft.Azure.Management.Resource.Fluent.Core;
+using Microsoft.Azure.Management.Compute.Fluent;
 using System.Threading.Tasks;
 using System.Text.RegularExpressions;
 using System.Diagnostics;
@@ -10,6 +9,8 @@ using System.IO;
 using System.Collections.Generic;
 using Newtonsoft.Json;
 using System.Collections.Concurrent;
+using Microsoft.Azure.Management.ResourceManager.Fluent.Authentication;
+using Microsoft.Azure.Management.ResourceManager.Fluent.Core;
 
 namespace AutoShutdown
 {
@@ -18,8 +19,8 @@ namespace AutoShutdown
         public bool Simulate { get; set; }
         public bool DefaultToOff { get; set; }
         public SubscriptionInfo[] Subscriptions { get; set; }
-        public bool SendSlackInfo {get;set;}
-        public string SlackUrl {get;set;}
+        public bool SendSlackInfo { get; set; }
+        public string SlackUrl { get; set; }
 
     }
 
@@ -33,35 +34,36 @@ namespace AutoShutdown
 
     public class Program
     {
-        public static ConcurrentDictionary<string,SubscriptionInfo> subscriptionInfo =
-            new ConcurrentDictionary<string,SubscriptionInfo>();
+        public static ConcurrentDictionary<string, SubscriptionInfo> subscriptionInfo =
+            new ConcurrentDictionary<string, SubscriptionInfo>();
         private static ShutdownConfig config;
-        public static ConcurrentBag<string> MachinesStarted = new ConcurrentBag<string>();
+        private static ConcurrentBag<string> machinesStarted = new ConcurrentBag<string>();
         public static ConcurrentBag<string> MachinesStopped = new ConcurrentBag<string>();
         public static ConcurrentBag<string> MachinesWithTag = new ConcurrentBag<string>();
         public static ConcurrentBag<string> MachinesWithoutTag = new ConcurrentBag<string>();
+
+        public static ConcurrentBag<string> MachinesStarted { get => machinesStarted; set => machinesStarted = value; }
 
         public static void AssertVms(AzureCredentials credentials, string subscriptionId)
         {
             var azure = Azure
                     .Configure()
-                    .WithLogLevel(HttpLoggingDelegatingHandler.Level.NONE)
+                    .WithLogLevel(HttpLoggingDelegatingHandler.Level.None)
                     .Authenticate(credentials)
                     .WithSubscription(subscriptionId);
 
             var defaultToOff = subscriptionInfo[subscriptionId].DefaultToOff.HasValue ? subscriptionInfo[subscriptionId].DefaultToOff.Value : config.DefaultToOff;
             var simulate = subscriptionInfo[subscriptionId].DefaultToOff.HasValue ? subscriptionInfo[subscriptionId].Simulate.Value : config.Simulate;
 
-            PagedList<Microsoft.Azure.Management.Compute.Fluent.IVirtualMachine> azureVms;
+            IEnumerable<IVirtualMachine> azureVms;
 
             try
             {
-                 azureVms = azure.VirtualMachines.List();
-                 azureVms.LoadAll();
+                azureVms = azure.VirtualMachines.List();
             }
             catch (Exception ex)
             {
-                azureVms = new PagedList<Microsoft.Azure.Management.Compute.Fluent.IVirtualMachine>(new List<Microsoft.Azure.Management.Compute.Fluent.IVirtualMachine>());
+                azureVms = new List<IVirtualMachine>();
                 Console.WriteLine(ex.Message);
             }
 
@@ -69,18 +71,20 @@ namespace AutoShutdown
             var parallelOptions = new ParallelOptions();
             parallelOptions.MaxDegreeOfParallelism = 50;
 
-            Parallel.ForEach(azureVms, parallelOptions, (vm) => {
-                var shutdownKey = vm.Tags.FirstOrDefault(t => t.Key.Equals("AutoShutdownSchedule",StringComparison.OrdinalIgnoreCase));
+            Parallel.ForEach(azureVms, parallelOptions, (vm) =>
+            {
+                var shutdownKey = vm.Tags.FirstOrDefault(t => t.Key.Equals("AutoShutdownSchedule", StringComparison.OrdinalIgnoreCase));
                 if (!string.IsNullOrWhiteSpace(shutdownKey.Key))
                 {
-                    try {
+                    try
+                    {
                         MachinesWithTag.Add(vm.Name);
                         Debug.WriteLine($"[Trace - {vm.Name}] Auto-Shutdown found");
                         if (vm.Inner.ProvisioningState != "Failed")
                         {
                             if (!(shutdownKey.Value.ToLower() == "donotshutdown"))
                             {
-                                var powerState = vm.PowerState.ToString().Replace("PowerState/","");
+                                var powerState = vm.PowerState.ToString().Replace("PowerState/", "");
                                 var schedules = shutdownKey.Value.Split(',');
                                 var shouldBeOff = schedules.Any(x => CheckScheduleEntry(x));
                                 if (shouldBeOff && powerState.Contains("running"))
@@ -89,10 +93,11 @@ namespace AutoShutdown
                                     MachinesStopped.Add(vm.Name);
                                     if (!simulate)
                                     {
-                                        Task.Run(() => {
+                                        Task.Run(() =>
+                                        {
                                             try
                                             {
-                                                azure.VirtualMachines.Deallocate(vm.ResourceGroupName,vm.Name);
+                                                azure.VirtualMachines.Deallocate(vm.ResourceGroupName, vm.Name);
                                             }
                                             catch (Exception ex)
                                             {
@@ -107,10 +112,11 @@ namespace AutoShutdown
                                     Debug.WriteLine($"[Trace - {vm.Name}] Starting VM");
                                     if (!simulate)
                                     {
-                                        Task.Run(() => {
+                                        Task.Run(() =>
+                                        {
                                             try
                                             {
-                                                azure.VirtualMachines.Start(vm.ResourceGroupName,vm.Name);
+                                                azure.VirtualMachines.Start(vm.ResourceGroupName, vm.Name);
                                             }
                                             catch (Exception ex)
                                             {
@@ -137,16 +143,17 @@ namespace AutoShutdown
                     {
                         try
                         {
-                            var powerState = vm.PowerState.ToString().Replace("PowerState/","");
+                            var powerState = vm.PowerState.ToString().Replace("PowerState/", "");
                             if (powerState.Contains("running"))
                             {
                                 MachinesStopped.Add(vm.Name);
                                 if (!simulate)
                                 {
-                                    Task.Run(() => {
+                                    Task.Run(() =>
+                                    {
                                         try
                                         {
-                                            azure.VirtualMachines.Deallocate(vm.ResourceGroupName,vm.Name);
+                                            azure.VirtualMachines.Deallocate(vm.ResourceGroupName, vm.Name);
                                         }
                                         catch (Exception ex)
                                         {
@@ -176,10 +183,10 @@ namespace AutoShutdown
                 credentialsPath = args[0];
                 configPath = args[1];
             }
-            AzureCredentials credentials = AzureCredentials.FromFile(credentialsPath);
+            AzureCredentialsFactory factory = new AzureCredentialsFactory();
+            AzureCredentials credentials = factory.FromFile(credentialsPath);
             Console.WriteLine("Starting to verify machine state");
             var azureList = Azure.Authenticate(credentials).Subscriptions.List();
-            azureList.LoadAll();
             try
             {
                 config = JsonConvert.DeserializeObject<ShutdownConfig>(File.ReadAllText(configPath));
@@ -191,7 +198,7 @@ namespace AutoShutdown
             SlackPayload payload = new SlackPayload();
             foreach (var subscription in config.Subscriptions)
             {
-                subscriptionInfo.GetOrAdd(subscription.SubscriptionId,subscription);
+                subscriptionInfo.GetOrAdd(subscription.SubscriptionId, subscription);
             }
 
             foreach (var subscription in config.Subscriptions)
@@ -222,27 +229,29 @@ namespace AutoShutdown
             message.Username = "Auto Shutdown *" + subscription + "*";
             message.PreText = $"Shutdown for *{subscription}* \n  Machines with tag: {MachinesWithTag.Count}, Machines without tag: {MachinesWithoutTag.Count}";
             message.Fields = new List<SlackField>();
-            message.Fields.Add(new SlackField() {
+            message.Fields.Add(new SlackField()
+            {
                 Title = $"{MachinesStarted.Count} Machines were started:",
-                Value = string.Join("\n",MachinesStarted.OrderBy(m => m)),
+                Value = string.Join("\n", MachinesStarted.OrderBy(m => m)),
                 Short = true
             });
-            message.Fields.Add(new SlackField() {
+            message.Fields.Add(new SlackField()
+            {
                 Title = $"{MachinesStopped.Count} Machines were stopped:",
-                Value = string.Join("\n",MachinesStopped.OrderBy(m => m)),
+                Value = string.Join("\n", MachinesStopped.OrderBy(m => m)),
                 Short = true
             });
 
             return message;
         }
 
-        static bool CheckScheduleEntry (string timeRange)
+        static bool CheckScheduleEntry(string timeRange)
         {
             var currentTime = DateTime.UtcNow;
             var midnight = DateTime.UtcNow.AddDays(1).Date;
-            DateTime? rangeStart = null,rangeEnd = null,parsedDay = null;
-            if ( string.IsNullOrWhiteSpace(timeRange) ||
-                timeRange.Equals("DoNotShutDown",StringComparison.OrdinalIgnoreCase))
+            DateTime? rangeStart = null, rangeEnd = null, parsedDay = null;
+            if (string.IsNullOrWhiteSpace(timeRange) ||
+                timeRange.Equals("DoNotShutDown", StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }
@@ -251,7 +260,7 @@ namespace AutoShutdown
                 // Parse as range if contains '->'
                 if (timeRange.Contains("->"))
                 {
-                    var timeRangeComponents = Regex.Split(timeRange,"->");
+                    var timeRangeComponents = Regex.Split(timeRange, "->");
                     if (timeRangeComponents.Length == 2)
                     {
                         rangeStart = DateTime.Parse(timeRangeComponents[0]);
@@ -281,7 +290,7 @@ namespace AutoShutdown
                 else
                 {
                     DayOfWeek dayOfWeek;
-                    var isDay = Enum.TryParse(timeRange,out dayOfWeek);
+                    var isDay = Enum.TryParse(timeRange, out dayOfWeek);
                     if (isDay)
                     {
                         // If specified as day of week, check if today
